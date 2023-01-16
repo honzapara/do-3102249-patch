@@ -1,0 +1,272 @@
+diff --git a/core/modules/ckeditor/js/plugins/drupalmedia/plugin.es6.js b/core/modules/ckeditor/js/plugins/drupalmedia/plugin.es6.js
+index 7a0c5a4213..6921db5af4 100644
+--- a/core/modules/ckeditor/js/plugins/drupalmedia/plugin.es6.js
++++ b/core/modules/ckeditor/js/plugins/drupalmedia/plugin.es6.js
+@@ -222,6 +222,7 @@
+               widget._setUpDynamicEditables();
+               widget._setUpEditButton();
+               editor.fire('unlockSnapshot');
++              editor.fire('saveSnapshot');
+             });
+           }
+ 
+diff --git a/core/modules/ckeditor/js/plugins/drupalmedia/plugin.js b/core/modules/ckeditor/js/plugins/drupalmedia/plugin.js
+index 8a8e1d574b..f7883927a3 100644
+--- a/core/modules/ckeditor/js/plugins/drupalmedia/plugin.js
++++ b/core/modules/ckeditor/js/plugins/drupalmedia/plugin.js
+@@ -143,6 +143,7 @@
+               widget._setUpDynamicEditables();
+               widget._setUpEditButton();
+               editor.fire('unlockSnapshot');
++              editor.fire('saveSnapshot');
+             });
+           }
+           if (this.oldData) {
+diff --git a/core/modules/media/tests/src/FunctionalJavascript/MediaLayoutBuilder.php b/core/modules/media/tests/src/FunctionalJavascript/MediaLayoutBuilder.php
+new file mode 100644
+index 0000000000..45dd26dfd7
+--- /dev/null
++++ b/core/modules/media/tests/src/FunctionalJavascript/MediaLayoutBuilder.php
+@@ -0,0 +1,242 @@
++<?php
++
++namespace Drupal\Tests\media\FunctionalJavascript;
++
++use Drupal\media\Entity\Media;
++use Drupal\editor\Entity\Editor;
++use Drupal\filter\Entity\FilterFormat;
++use Drupal\Core\File\FileSystemInterface;
++use Drupal\block_content\Entity\BlockContent;
++use Drupal\block_content\Entity\BlockContentType;
++use Drupal\Tests\ckeditor\Traits\CKEditorTestTrait;
++use Drupal\Tests\media\Traits\MediaTypeCreationTrait;
++
++/**
++ * Ensures that media works with layout builder.
++ *
++ * @group media
++ */
++class MediaLayoutBuilder extends MediaJavascriptTestBase {
++
++  use CKEditorTestTrait;
++  use MediaTypeCreationTrait;
++
++  /**
++   * {@inheritdoc}
++   */
++  protected $defaultTheme = 'stark';
++
++  /**
++   * Modules to enable.
++   *
++   * @var array
++   */
++  protected static $modules = [
++    'node',
++    'media',
++    'block',
++    'filter',
++    'editor',
++    'ckeditor',
++    'contextual',
++    'block_content',
++    'layout_builder',
++    'media_library',
++  ];
++
++  /**
++   * The node to customize with Layout Builder.
++   *
++   * @var \Drupal\node\NodeInterface
++   */
++  protected $node;
++
++  /**
++   * The FilterFormat config entity used for testing.
++   *
++   * @var \Drupal\filter\FilterFormatInterface
++   */
++  protected $filterFormat;
++
++  /**
++   * {@inheritdoc}
++   */
++  protected function setUp(): void {
++    parent::setUp();
++    $this->drupalPlaceBlock('local_actions_block');
++    $this->drupalPlaceBlock('local_tasks_block');
++
++    $this->createMediaType('image', ['id' => 'image', 'label' => 'Image']);
++    $file_data = file_get_contents(\Drupal::service('extension.path.resolver')->getPath('module', 'media') . '/tests/fixtures/example_1.jpeg');
++    $file = \Drupal::service('file.repository')->writeData($file_data, 'public://example_1.jpg', FileSystemInterface::EXISTS_REPLACE);
++    Media::create([
++      'bundle' => 'image',
++      'name' => 'Example One',
++      'field_media_image' => [
++        'target_id' => $file->id(),
++      ],
++    ])->save();
++
++    FilterFormat::create([
++      'format' => 'basic_html',
++      'name' => 'Basic HTML',
++      'weight' => 0,
++      'roles' => ['authenticated'],
++      'filters' => [
++        'filter_align' => [
++          'id' => 'filter_align',
++          'provider' => 'filter',
++          'status' => TRUE,
++          'weight' => 90,
++        ],
++        'media_embed' => [
++          'id' => 'media_embed',
++          'provider' => 'media',
++          'status' => TRUE,
++          'weight' => 100,
++          'settings' => [
++            'default_view_mode' => 'default',
++          ],
++        ],
++      ],
++    ])->save();
++
++    Editor::create([
++      'format' => 'basic_html',
++      'editor' => 'ckeditor',
++      'settings' => [
++        'toolbar' => [
++          'rows' => [
++            [
++              [
++                'name' => 'Media',
++                'items' => ['DrupalMediaLibrary'],
++              ],
++            ],
++          ],
++        ],
++      ],
++    ])->save();
++
++    $bundle = BlockContentType::create([
++      'id' => 'basic',
++      'label' => 'Basic',
++    ]);
++    $bundle->save();
++    block_content_add_body_field($bundle->id());
++
++    BlockContent::create([
++      'info' => 'My custom block',
++      'type' => 'basic',
++      'body' => [
++        [
++          'value' => 'This is the block content',
++          'format' => 'basic_html',
++        ],
++      ],
++    ])->save();
++
++    $this->createContentType(['type' => 'bundle_with_section_field']);
++    $this->node = $this->createNode([
++      'type' => 'bundle_with_section_field',
++      'title' => 'The node title',
++      'body' => [
++        [
++          'value' => 'The node body',
++        ],
++      ],
++    ]);
++
++    \Drupal::entityTypeManager()
++      ->getStorage('entity_view_display')
++      ->create([
++        'targetEntityType' => 'node',
++        'bundle' => 'bundle_with_section_field',
++        'mode' => 'full',
++      ])
++      ->enable()
++      ->setThirdPartySetting('layout_builder', 'enabled', TRUE)
++      ->setThirdPartySetting('layout_builder', 'allow_custom', TRUE)
++      ->save();
++  }
++
++  /**
++   * Tests a media type administration.
++   */
++  public function testLayoutBuilder() {
++    $this->getSession()->maximizeWindow();
++    $assert_session = $this->assertSession();
++    $page = $this->getSession()->getPage();
++
++    $this->drupalLogin($this->drupalCreateUser([
++      'access content',
++      'administer media',
++      'administer blocks',
++      'bypass node access',
++      'administer filters',
++      'configure any layout',
++      'access media overview',
++      'administer node fields',
++      'administer media types',
++      'access contextual links',
++      'administer node display',
++      'administer media display',
++      'administer site configuration',
++      'create and edit custom blocks',
++    ]));
++    $this->drupalGet('node/' . $this->node->id() . '/layout');
++    $page->clickLink('Add block');
++    $assert_session->assertWaitOnAjaxRequest();
++    $this->assertNotEmpty($assert_session->waitForLink('Create custom block'));
++    $this->clickLink('Create custom block');
++    $assert_session->assertWaitOnAjaxRequest();
++    $page->findField('Title')->setValue('Example One');
++    $this->assertSession()->waitForElementVisible('css', '.cke_button__drupalmedialibrary')->click();
++    $this->assertNotEmpty($assert_session->waitForId('drupal-modal'));
++    $this->assertSession()->waitForElementVisible('css', '[data-drupal-selector="edit-media-library-select-form-0"]')->click();
++    $assert_session->elementExists('css', '.ui-dialog-buttonpane')->pressButton('Insert selected');
++    $page->pressButton('Add block');
++    $assert_session->assertWaitOnAjaxRequest();
++    /** @var \Behat\Mink\Element\NodeElement $basic_block */
++    $basic_block = $page->findAll('css', '.layout-builder-block')[1];
++    $uuid = $basic_block->getAttribute('data-layout-block-uuid');
++    $selector = '[data-layout-block-uuid="' . $uuid . '"]';
++
++    // The default media alignment should be center.
++    $this->assertNotEmpty($basic_block->find('css', '.align-center'));
++
++    $this->getSession()->executeScript("jQuery('{$selector} .contextual .trigger').toggleClass('visually-hidden').click();");
++    $basic_block->findLink('Configure')->click();
++    $assert_session->assertWaitOnAjaxRequest();
++    $this->assignNameToCkeditorPanelIframe();
++    $this->getSession()->switchToIFrame('ckeditor');
++    $this->assertNotEmpty($assert_session->waitForButton('Edit media'));
++    $page->pressButton('Edit media');
++    $assert_session->assertWaitOnAjaxRequest();
++    $this->getSession()->switchToIFrame();
++    $page->findField('attributes[data-align]')->selectOption('right');
++    $assert_session->elementExists('css', '.ui-dialog-buttonpane')->pressButton('Save');
++    $assert_session->assertWaitOnAjaxRequest();
++    $page->pressButton('Update');
++    $assert_session->assertWaitOnAjaxRequest();
++
++    // The default media alignment should be right.
++    $basic_block = $page->findAll('css', '.layout-builder-block')[1];
++    $this->assertNotEmpty($basic_block->find('css', '.align-right'));
++  }
++
++  /**
++   * Assigns a name to the CKEditor context menu iframe.
++   *
++   * @see \Behat\Mink\Session::switchToIFrame()
++   */
++  protected function assignNameToCkeditorPanelIframe() {
++    $javascript = <<<JS
++(function(){
++  document.getElementsByClassName('cke_wysiwyg_frame')[0].id = 'ckeditor';
++})()
++JS;
++    $this->getSession()->evaluateScript($javascript);
++  }
++
++}
